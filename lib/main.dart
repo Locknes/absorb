@@ -814,6 +814,15 @@ class _AuthGateState extends State<AuthGate> {
       debugPrint('[Init] DownloadService done (${sw.elapsedMilliseconds}ms)');
     }
 
+    // Route cold-start play() and voice search requests before AudioService.init()
+    // drains queued platform calls. Registered as static callbacks to avoid
+    // circular imports with AudioPlayerService.
+    if (!AppPlatform.lacksPhonePlugins) {
+      AudioPlayerService.onColdStartPlayRequested =
+          HomeWidgetService().resumeLastPlayedIfAvailable;
+      AudioPlayerService.onSearchPlayRequested = SiriService().playFromSearch;
+    }
+
     // Timeout guards against AudioService.init() hanging when Android killed
     // the app process but kept the MediaBrowserService alive.
     debugPrint('[Init] AudioPlayerService... (${sw.elapsedMilliseconds}ms)');
@@ -822,13 +831,7 @@ class _AuthGateState extends State<AuthGate> {
     } catch (e) {
       debugPrint('[Init] AudioPlayerService.init timed out or failed: $e');
     }
-    // Route cold-start play() calls (headphones / lock screen tap before
-    // the UI has bootstrapped the current item) through the existing
-    // home-widget restore path. Registered as a static callback to avoid a
-    // circular import between AudioPlayerService and HomeWidgetService.
     if (!AppPlatform.lacksPhonePlugins) {
-      AudioPlayerService.onColdStartPlayRequested =
-          HomeWidgetService().resumeLastPlayedIfAvailable;
       // A headset press may have cold-launched this process into the background
       // with the native core already playing - adopt that audio now rather than
       // leaving the lock screen blank until the next press.

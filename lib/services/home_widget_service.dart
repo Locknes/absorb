@@ -16,6 +16,7 @@ import 'server_backend.dart';
 import 'download_service.dart';
 import 'progress_sync_service.dart';
 import 'scoped_prefs.dart';
+import 'siri_service.dart';
 import 'user_account_service.dart';
 import 'wear_player_service.dart';
 import 'sleep_timer_service.dart';
@@ -336,6 +337,12 @@ class HomeWidgetService {
               position: position != null && position.isFinite && position > 0 ? position : null,
             );
           }
+          break;
+        case '/play_search':
+          SiriService().playFromSearch(
+            uri.queryParameters['q'] ?? '',
+            uri.queryParameters,
+          );
           break;
         case '/next_chapter':
         case '/prev_chapter':

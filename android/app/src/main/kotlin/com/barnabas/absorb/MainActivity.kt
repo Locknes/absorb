@@ -1,5 +1,6 @@
 package com.barnabas.absorb
 
+import android.app.SearchManager
 import android.content.Context
 import android.content.Intent
 import android.media.AudioDeviceInfo
@@ -57,13 +58,24 @@ class MainActivity : AudioServiceActivity() {
     // app started playing on its own. A real tap always creates the activity
     // fresh, so only a recreated one can be carrying a replay.
     override fun onCreate(savedInstanceState: Bundle?) {
+        rewriteSearchIntent(intent)
         if (savedInstanceState != null &&
             intent?.action == HomeWidgetLaunchIntent.HOME_WIDGET_LAUNCH_ACTION) {
             Log.d(TAG, "Dropping replayed widget launch ${intent.data}")
             intent.action = Intent.ACTION_MAIN
             intent.data = null
         }
+        val cached = FlutterEngineCache.getInstance().get(AudioServicePlugin.getFlutterEngineId())
+        val reusingWarmEngine = cached != null &&
+            (!AudioServicePlugin.wasEngineBornHeadless() || AudioService.isInstancePlaying())
         super.onCreate(savedInstanceState)
+        val current = intent
+        if (savedInstanceState == null && reusingWarmEngine &&
+            current?.action == HomeWidgetLaunchIntent.HOME_WIDGET_LAUNCH_ACTION) {
+            // Cached engine won't re-run HomeWidgetService.init(); deliver as a new intent.
+            flutterEngine?.activityControlSurface?.onNewIntent(Intent(current))
+            setIntent(Intent(Intent.ACTION_MAIN))
+        }
     }
 
     override fun provideFlutterEngine(context: Context): FlutterEngine? {
@@ -502,14 +514,33 @@ class MainActivity : AudioServiceActivity() {
         return am.isBluetoothA2dpOn || am.isBluetoothScoOn
     }
 
-    // Discard media search intents from Google Assistant / Android Auto so the
-    // voice query text doesn't leak into the app's search field.
+    private fun rewriteSearchIntent(intent: Intent?): Boolean {
+        val action = intent?.action ?: return false
+        if (action != MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH &&
+            action != "android.media.action.MEDIA_PLAY_FROM_SEARCH") return false
+        val uri = Uri.Builder().scheme("absorb").authority("widget").appendPath("play_search")
+        intent.getStringExtra(SearchManager.QUERY)?.takeIf { it.isNotBlank() }
+            ?.let { uri.appendQueryParameter("q", it) }
+        for (key in arrayOf(
+            MediaStore.EXTRA_MEDIA_TITLE,
+            MediaStore.EXTRA_MEDIA_ARTIST,
+            MediaStore.EXTRA_MEDIA_ALBUM,
+            MediaStore.EXTRA_MEDIA_FOCUS,
+        )) {
+            intent.getStringExtra(key)?.takeIf { it.isNotBlank() }
+                ?.let { uri.appendQueryParameter(key, it) }
+        }
+        intent.replaceExtras(Bundle())
+        intent.action = HomeWidgetLaunchIntent.HOME_WIDGET_LAUNCH_ACTION
+        intent.data = uri.build()
+        return true
+    }
+
+    // Route media voice search intents through HomeWidget's URI listener while
+    // discarding plain text search intents so they don't leak into UI search.
     override fun onNewIntent(intent: Intent) {
-        val action = intent.action
-        if (action == MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH ||
-            action == Intent.ACTION_SEARCH ||
-            action == "android.media.action.MEDIA_PLAY_FROM_SEARCH") {
-            Log.d(TAG, "Discarding search intent: $action")
+        if (!rewriteSearchIntent(intent) && intent.action == Intent.ACTION_SEARCH) {
+            Log.d(TAG, "Discarding search intent: ${intent.action}")
             return
         }
         // FlutterActivity never adopts a new intent, so the widget's "launched

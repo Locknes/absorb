@@ -43,6 +43,37 @@ class SiriService {
   Map<String, Map<String, dynamic>> _progress = const {};
   DateTime? _progressAt;
 
+  /// Resolves and plays an Android MediaSession / Assistant voice search.
+  Future<bool> playFromSearch(String query, [Map<String, dynamic>? extras]) async {
+    String? clean(Object? v) {
+      final s = (v as String?)?.trim();
+      return (s == null || s.isEmpty) ? null : s;
+    }
+
+    final raw = clean(query);
+    final title = clean(extras?['android.intent.extra.title']) ??
+        clean(extras?['android.intent.extra.album']);
+    var artist = clean(extras?['android.intent.extra.artist']);
+    var name = title ?? raw;
+    if ((extras?['android.intent.extra.focus'] == 'vnd.android.cursor.item/artist' &&
+            title == null) ||
+        name == null) {
+      name ??= artist;
+      artist = null;
+    }
+    final latest = raw != null &&
+        RegExp(r'\b(latest|newest|new)\b', caseSensitive: false).hasMatch(raw);
+    final q = SiriQuery(name: name, artist: artist, latest: latest);
+    if (q.isResume) return _resume();
+
+    if (!Platform.isIOS) await _rebuildCatalog();
+    final res = await _resolve(q);
+    final items = res['items'] as List<dynamic>? ?? const [];
+    if (items.isEmpty) return false;
+    final first = items.first as Map<String, dynamic>;
+    return (await _play({'id': first['id'], 'latest': q.latest}))['ok'] == true;
+  }
+
   Future<void> init() async {
     if (_initialized || !Platform.isIOS) return;
     _initialized = true;
@@ -532,6 +563,7 @@ class SiriService {
   }
 
   Future<void> _publishCatalog(List<SiriEntry> list) async {
+    if (!Platform.isIOS) return;
     final ordered = [...list]..sort((a, b) {
         final r = (b.inProgress ? 1 : 0).compareTo(a.inProgress ? 1 : 0);
         if (r != 0) return r;
