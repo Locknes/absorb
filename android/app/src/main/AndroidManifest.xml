@@ -47,6 +47,10 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="absorb" android:host="setup"/>
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+            </intent-filter>
         </activity>
 
         <!-- OIDC callback via Chrome Custom Tab (flutter_web_auth_2) -->

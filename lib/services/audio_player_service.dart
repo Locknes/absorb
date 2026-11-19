@@ -1240,6 +1240,31 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     await _playFromAutoMediaId(mediaId);
   }
 
+  @override
+  Future<void> prepareFromSearch(
+    String query, [
+    Map<String, dynamic>? extras,
+  ]) => playFromSearch(query, extras);
+
+  @override
+  Future<void> playFromSearch(
+    String query, [
+    Map<String, dynamic>? extras,
+  ]) async {
+    debugPrint('[Handler] playFromSearch("$query")');
+    final searchPlay = AudioPlayerService.onSearchPlayRequested;
+    if (searchPlay != null) {
+      await searchPlay(query, extras);
+      return;
+    }
+    if (query.trim().isEmpty) {
+      await play();
+      return;
+    }
+    final hits = await search(query, extras);
+    if (hits.isNotEmpty) await _playFromAutoMediaId(hits.first.id);
+  }
+
   Future<void> _playFromAutoMediaId(String mediaId) async {
     final absId = AutoMediaIds.absItemId(mediaId);
     if (absId == null) {
@@ -1478,6 +1503,8 @@ class AudioPlayerService extends ChangeNotifier {
   /// HomeWidgetService (which has the item-fetch + ApiService construction
   /// logic), avoiding a circular import.
   static Future<void> Function()? onColdStartPlayRequested;
+  static Future<bool> Function(String query, Map<String, dynamic>? extras)?
+      onSearchPlayRequested;
 
   static AudioPlayerHandler? _handler;
   static AudioPlayerHandler? get handler => _handler;
@@ -3024,10 +3051,10 @@ class AudioPlayerService extends ChangeNotifier {
       // forever. media_kit plays the audio; the handler runs standalone.
       if (AppPlatform.isWindows) {
         JustAudioMediaKit.ensureInitialized(windows: true, linux: false);
-        _handler = AudioPlayerHandler();
+        _handler = AudioPlayerHandler()..bindService(_instance);
       } else {
         _handler = await AudioService.init<AudioPlayerHandler>(
-          builder: () => AudioPlayerHandler(),
+          builder: () => AudioPlayerHandler()..bindService(_instance),
           config: AudioServiceConfig(
             androidNotificationChannelId: 'com.audiobookshelf.app.channel.audio',
             androidNotificationChannelName: 'Absorb',
@@ -3048,8 +3075,6 @@ class AudioPlayerService extends ChangeNotifier {
           ),
         );
       }
-      // Bind service so handler routes play/pause through service (for auto-rewind)
-      _handler!.bindService(_instance);
       _instance._audioServiceErrorSub ??= AudioService.asyncError.listen(
         (error) => debugPrint('[AudioService] Platform error: $error'),
       );

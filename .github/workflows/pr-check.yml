@@ -1,0 +1,78 @@
+name: Android CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  analyze-and-build:
+    name: Analyze & Build Dev Debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.0
+          cache: true
+
+      - name: Install Dart dependencies
+        run: flutter pub get
+
+      - name: Static analysis (changed Dart files)
+        run: |
+          BASE_REF="origin/main"
+          git rev-parse --verify "$BASE_REF" >/dev/null 2>&1 || BASE_REF="HEAD~1"
+          CHANGED_DART=$(git diff --name-only "$BASE_REF"...HEAD -- 'lib/*.dart' 'lib/**/*.dart' || true)
+          if [ -z "$CHANGED_DART" ]; then
+            echo "No modified Dart files relative to $BASE_REF; skipping targeted dart analyze."
+            exit 0
+          fi
+          echo "Analyzing modified Dart files:"
+          echo "$CHANGED_DART"
+          set +e
+          OUT=$(dart analyze $CHANGED_DART 2>&1)
+          RC=$?
+          set -e
+          echo "$OUT"
+          if [ "$RC" -ne 0 ]; then
+            echo "$OUT" | tail -n 30 | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done
+            exit "$RC"
+          fi
+
+      - name: Build Dev flavor debug APK (side-by-side install)
+        run: |
+          set +e
+          OUT=$(flutter build apk --debug --flavor dev --dart-define=GITHUB_BUILD=true 2>&1)
+          RC=$?
+          set -e
+          echo "$OUT"
+          if [ "$RC" -ne 0 ]; then
+            echo "$OUT" | grep -E "(ERROR|Error:|FAILURE|Exception|e: )" | tail -n 25 | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done
+            exit "$RC"
+          fi
+
+      - name: Upload dev debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: absorb-dev-debug-apk
+          path: build/app/outputs/apk/dev/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
